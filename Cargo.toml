@@ -1,0 +1,22 @@
+[package]
+name = "torrent-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+reqwest = "0.11"
+tokio = { version = "1", features = ["full"] }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_bencode = "0.2.3"
+bytepack = { path = "../bytepack" }
+bytepack-proc-macro = { path = "../bytepack/bytepack-proc-macro" }
+
+thiserror = "1.0.48"
+
+url = "2.4.1"
+hex-string = "0.1.0"
+sha1 = "0.10.6"

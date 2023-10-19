@@ -1,15 +1,23 @@
+use std::sync::Arc;
+
 pub mod data;
+pub mod net;
+pub mod peer;
 pub mod tracker;
 pub mod util;
 
+pub struct TorrentContext {
+    pub info_hash: Arc<[u8; 20]>,
+    pub peer_id: Arc<[u8; 20]>,
+}
+
 #[cfg(test)]
 mod tests {
-    use serde_bytes::ByteBuf;
-    use sha1::{Sha1, Digest};
+    use sha1::{Digest, Sha1};
 
     use crate::{
         data::{
-            metainfo::{FileMode, Metainfo},
+            metainfo::Metainfo,
             tracker::{TrackerRequest, TrackingEvent},
         },
         util::{ApplyTransform, IntoHexString},
@@ -23,10 +31,8 @@ mod tests {
         let mut metainfo = Metainfo::from_torrent_file(TEST_TORRENT_FILE).unwrap();
 
         let info = &metainfo.info;
-        let info_hash = info
-            .apply(serde_bencode::to_bytes)
-            .unwrap();
-        
+        let info_hash = info.apply(serde_bencode::to_bytes).unwrap();
+
         let mut sha1_hasher = Sha1::new();
         sha1_hasher.update(&info_hash);
         let info_hash: [u8; 20] = sha1_hasher.finalize().into();

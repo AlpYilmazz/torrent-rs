@@ -28,7 +28,7 @@ async fn main() {
     let info_hash: [u8; 20] = sha1_hasher.finalize().into();
 
     let context = Arc::new(TorrentContext {
-        self_peer_id: Arc::new(array::from_fn(|i| i as u8)),
+        self_peer_id: Arc::new(array::from_fn(|i| 'A' as u8 + i as u8)),
         info_hash: Arc::new(info_hash),
         piece_hashes: metainfo.info.get_pieces_as_sha1_hex().into(),
     });

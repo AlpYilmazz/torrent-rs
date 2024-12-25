@@ -205,7 +205,12 @@ impl TrackerClient {
     }
 
     fn add_peers(&mut self, peers: impl IntoIterator<Item = SocketAddr>) {
-        self.peers.write().unwrap().extend(peers);
+        let mut ps_write = self.peers.write().unwrap(); //.extend(peers);
+        for addr in peers {
+            if !ps_write.contains(&addr) {
+                ps_write.push(addr);
+            }
+        }
     }
 
     async fn send_to(&self, target: &SocketAddr, buf: &Buffer) {
@@ -264,7 +269,7 @@ impl TrackerClient {
             action: action::ANNOUNCE,
             transaction_id,
             info_hash: self.context.info_hash.clone(),
-            peer_id: self.context.peer_id.clone(),
+            peer_id: self.context.self_peer_id.clone(),
             // TODO: fill fields correctly
             downloaded: 0,
             left: 100,

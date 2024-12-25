@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
 pub mod data;
+pub mod piece;
 pub mod net;
 pub mod peer;
 pub mod tracker;
 pub mod util;
 
 pub struct TorrentContext {
+    pub self_peer_id: Arc<[u8; 20]>,
     pub info_hash: Arc<[u8; 20]>,
-    pub peer_id: Arc<[u8; 20]>,
+    pub piece_hashes: Arc<[String]>,
 }
 
 #[cfg(test)]

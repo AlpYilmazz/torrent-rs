@@ -16,6 +16,7 @@ bytepack = { path = "../bytepack" }
 bytepack-proc-macro = { path = "../bytepack/bytepack-proc-macro" }
 
 thiserror = "1.0.48"
+anyhow = "1.0.95"
 
 url = "2.4.1"
 hex-string = "0.1.0"

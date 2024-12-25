@@ -60,12 +60,12 @@ impl Metainfo {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Info {
     #[serde(rename = "piece length")]
-    pub piece_length: u64,
+    pub piece_length: u32,
     /// String <br>
     /// length := 20*n <br>
     /// Divide into length 20 substrings <br>
     /// Each string is the SHA1 hash of each piece <br>
-    /// TODO: is it hex or base64 encoded
+    /// TODO: is it hex or base64 encoded -> hex
     pub pieces: ByteBuf,
     pub private: Option<i64>,
     pub name: String,

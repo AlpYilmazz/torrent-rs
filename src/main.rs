@@ -6,12 +6,7 @@ use torrent_rs::{
     data::{
         metainfo::Metainfo,
         tracker::{TrackerRequest, TrackingEvent},
-    },
-    net::{UdpConnection, UdpManager},
-    peer::{peer_handle_main, spin_peer_server, test_peer_connection, PeerConnections, PeerList},
-    tracker::client::TrackerClient,
-    util::{ApplyTransform, IntoHexString},
-    TorrentContext,
+    }, make_global, net::{UdpConnection, UdpManager}, peer::{peer_handle_main, PeerList}, util::{ApplyTransform, IntoHexString}, InfoHash, PeerId, SingleTorrent, TorrentContext
 };
 
 const TEST_TORRENT_FILE: &'static str = "the-northman.torrent";
@@ -21,16 +16,23 @@ const TRACKER_URL: &'static str = "http://thetracker.org/announce";
 #[tokio::main]
 async fn main() {
     let metainfo = Metainfo::from_torrent_file(TEST_TORRENT_FILE).unwrap();
-    let info_hash = serde_bencode::to_bytes(&metainfo.info).unwrap();
+    let info_bencoded = serde_bencode::to_bytes(&metainfo.info).unwrap();
 
     let mut sha1_hasher = Sha1::new();
-    sha1_hasher.update(&info_hash);
+    sha1_hasher.update(&info_bencoded);
     let info_hash: [u8; 20] = sha1_hasher.finalize().into();
 
-    let context = Arc::new(TorrentContext {
-        self_peer_id: Arc::new(array::from_fn(|i| 'A' as u8 + i as u8)),
-        info_hash: Arc::new(info_hash),
-        piece_hashes: metainfo.info.get_pieces_as_sha1_hex().into(),
+    let piece_hashes = metainfo.info.get_pieces_as_sha1_hex();
+
+    let context = make_global!(TorrentContext {
+        self_peer_id: PeerId::from_raw(PEER_ID.as_bytes().try_into().unwrap()),
+        torrents: vec![SingleTorrent {
+            id: 0,
+            info_hash: InfoHash::from_raw(info_hash),
+            piece_length: metainfo.info.piece_length,
+            piece_count: piece_hashes.len(),
+            piece_hashes: piece_hashes.into(),
+        }],
     });
     // let udp_socket = Arc::new(UdpSocket::bind("0.0.0.0:8080").await.unwrap());
     // let udp_connection = UdpConnection::new(UdpManager::new("0.0.0.0:8080").await.unwrap());
@@ -44,30 +46,14 @@ async fn main() {
         .collect::<Vec<_>>();
     dbg!(&trackers);
 
-    let peer_addrs = Arc::new(std::sync::Mutex::new(vec!["127.0.0.1:8080".to_socket_addrs().unwrap().next().unwrap()]));
-    let peer_list = Arc::new(tokio::sync::RwLock::new(PeerList::new()));
+    let peer_addrs = Arc::new(std::sync::Mutex::new((
+        0,
+        vec!["127.0.0.1:8080".to_socket_addrs().unwrap().next().unwrap()],
+    )));
 
-    let server_listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await.unwrap();
-
-    let server = tokio::spawn(
-        spin_peer_server(
-            context.clone(),
-            peer_addrs.clone(),
-            server_listener,
-        )
-    );
-
-    let client = tokio::spawn(
-        peer_handle_main(
-            context.clone(),
-            peer_addrs.clone(),
-            peer_list.clone(),
-            PeerConnections::new(),
-        )
-    );
+    let client = tokio::spawn(peer_handle_main(context.clone(), peer_addrs.clone()));
 
     client.await.unwrap();
-    server.await.unwrap();
 
     // let peers = Arc::new(std::sync::RwLock::new(Vec::new()));
 
@@ -76,7 +62,7 @@ async fn main() {
     // spawn(async move {
     //     let mut tracker_client =
     //         TrackerClient::with_trackers(context_move, peers_move, "0.0.0.0:8080", &trackers).await;
-    
+
     //     tracker_client.start().await;
     // });
 

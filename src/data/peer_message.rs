@@ -17,6 +17,10 @@ pub struct Handshake {
 }
 
 impl Handshake {
+    pub const fn const_hold_size() -> usize {
+        100
+    }
+
     pub fn new(info_hash: &[u8; 20], peer_id: &[u8; 20]) -> Self {
         Self {
             protocol_len: 19,
@@ -66,24 +70,42 @@ impl PeerMessage {
         }
     }
 
-    pub fn read_from(mtype: u8, buf: &[u8]) -> Result<Self, ()> {
-        // let mtype = u8::unpack(buf)?;
-        // let buf = &buf[u8::const_byte_size()..];
-        match mtype {
-            PEER_MESSAGE_CHOKE          => Ok(PeerMessage::Choke),
-            PEER_MESSAGE_UNCHOKE        => Ok(PeerMessage::Unchoke),
-            PEER_MESSAGE_INTERESTED     => Ok(PeerMessage::Interested),
-            PEER_MESSAGE_NOTINTERESTED  => Ok(PeerMessage::NotInterested),
-            PEER_MESSAGE_HAVE           => Ok(PeerMessage::Have(Have::unpack(buf)?)),
-            PEER_MESSAGE_BITFIELD       => Ok(PeerMessage::Bitfield(Bitfield::unpack(buf)?)),
-            PEER_MESSAGE_REQUEST        => Ok(PeerMessage::Request(Request::unpack(buf)?)),
-            PEER_MESSAGE_PIECE          => Ok(PeerMessage::Piece(Piece::unpack(buf)?)),
-            PEER_MESSAGE_CANCEL         => Ok(PeerMessage::Cancel(Cancel::unpack(buf)?)),
-            _ => Err(()),
+    // pub fn read_from(mtype: u8, buf: &[u8]) -> Result<Self, ()> {
+    //     // let mtype = u8::unpack(buf)?;
+    //     // let buf = &buf[u8::const_byte_size()..];
+    //     match mtype {
+    //         PEER_MESSAGE_CHOKE          => Ok(PeerMessage::Choke),
+    //         PEER_MESSAGE_UNCHOKE        => Ok(PeerMessage::Unchoke),
+    //         PEER_MESSAGE_INTERESTED     => Ok(PeerMessage::Interested),
+    //         PEER_MESSAGE_NOTINTERESTED  => Ok(PeerMessage::NotInterested),
+    //         PEER_MESSAGE_HAVE           => Ok(PeerMessage::Have(Have::unpack(buf)?)),
+    //         PEER_MESSAGE_BITFIELD       => Ok(PeerMessage::Bitfield(Bitfield::unpack(buf)?)),
+    //         PEER_MESSAGE_REQUEST        => Ok(PeerMessage::Request(Request::unpack(buf)?)),
+    //         PEER_MESSAGE_PIECE          => Ok(PeerMessage::Piece(Piece::unpack(buf)?)),
+    //         PEER_MESSAGE_CANCEL         => Ok(PeerMessage::Cancel(Cancel::unpack(buf)?)),
+    //         _ => Err(()),
+    //     }
+    // }
+}
+
+impl ByteSize for PeerMessage {
+    fn byte_size(&self) -> usize {
+        u8::const_byte_size() + match self {
+            Self::Choke => 0,
+            Self::Unchoke => 0,
+            Self::Interested => 0,
+            Self::NotInterested => 0,
+            Self::Have(_) => Have::const_byte_size(),
+            Self::Bitfield(b) => b.byte_size(),
+            Self::Request(_) => Request::const_byte_size(),
+            Self::Piece(p) => p.byte_size(),
+            Self::Cancel(_) => Cancel::const_byte_size(),
         }
     }
+}
 
-    pub fn write_into(&self, buf: &mut [u8]) -> Result<(), ()> {
+impl BytePack for PeerMessage {
+    fn pack(&self, buf: &mut [u8]) -> Result<(), ()> {
         self.message_type().pack(buf)?;
         let buf = &mut buf[u8::const_byte_size()..0];
         match self {

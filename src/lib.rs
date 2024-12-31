@@ -1,3 +1,4 @@
+use core::str;
 use std::sync::Arc;
 
 pub mod data;
@@ -7,9 +8,60 @@ pub mod peer;
 pub mod tracker;
 pub mod util;
 
+pub type Global<T> = std::sync::Arc<tokio::sync::RwLock<T>>;
+
+#[macro_export] macro_rules! make_global {
+    ($expr: expr) => {
+        std::sync::Arc::new(tokio::sync::RwLock::new($expr))
+    };
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PeerId {
+    pub id: [u8; 20],
+}
+
+impl PeerId {
+    pub fn from_raw(id: [u8; 20]) -> Self {
+        Self { id }
+    }
+
+    pub fn uninit() -> Self {
+        Self::from_raw([0; 20])
+    }
+
+    pub fn is_zeroed(&self) -> bool {
+        self.id.iter().all(|e| *e == 0)
+    }
+
+    pub fn as_str(&self) -> &str {
+        unsafe { str::from_utf8_unchecked(&self.id) }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InfoHash {
+    pub hash: [u8; 20],
+}
+
+impl InfoHash {
+    pub fn from_raw(hash: [u8; 20]) -> Self {
+        Self { hash }
+    }
+}
+
+pub type TorrentId = usize;
+
 pub struct TorrentContext {
-    pub self_peer_id: Arc<[u8; 20]>,
-    pub info_hash: Arc<[u8; 20]>,
+    pub self_peer_id: PeerId,
+    pub torrents: Vec<SingleTorrent>,
+}
+
+pub struct SingleTorrent {
+    pub id: TorrentId,
+    pub info_hash: InfoHash,
+    pub piece_length: u32,
+    pub piece_count: usize,
     pub piece_hashes: Arc<[String]>,
 }
 

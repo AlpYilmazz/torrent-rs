@@ -1,5 +1,7 @@
 use core::str;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
+
+use piece::TorrentFile;
 
 pub mod data;
 pub mod piece;
@@ -64,6 +66,8 @@ pub struct SingleTorrent {
     pub piece_count: usize,
     pub piece_hashes: Arc<[String]>,
 }
+
+pub type TorrentFiles = HashMap<TorrentId, Global<TorrentFile>>;
 
 #[cfg(test)]
 mod tests {

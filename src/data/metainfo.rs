@@ -85,13 +85,35 @@ impl Info {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum FileMode {
-    MultipleFiles {
-        files: Vec<File>,
-    },
-    SingleFile {
-        length: u64,
-        md5sum: Option<ByteBuf>,
-    },
+    SingleFile(SingleFile),
+    MultipleFiles(MultipleFiles),
+}
+
+impl FileMode {
+    pub fn unwrap_as_single(&self) -> &SingleFile {
+        match self {
+            FileMode::SingleFile(single_file) => single_file,
+            FileMode::MultipleFiles(_) => panic!("FileMode was MultipleFiles"),
+        }
+    }
+
+    pub fn unwrap_as_multi(&self) -> &MultipleFiles {
+        match self {
+            FileMode::SingleFile(_) => panic!("FileMode was SingleFile"),
+            FileMode::MultipleFiles(multiple_files) => multiple_files,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SingleFile {
+    pub length: u64,
+    pub md5sum: Option<ByteBuf>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MultipleFiles {
+    pub files: Vec<File>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

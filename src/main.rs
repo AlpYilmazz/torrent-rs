@@ -1,4 +1,4 @@
-use std::{array, iter, net::ToSocketAddrs, rc::Rc, sync::Arc, time::Duration};
+use std::{array, collections::HashMap, iter, net::ToSocketAddrs, rc::Rc, sync::Arc, time::Duration};
 
 use sha1::{Digest, Sha1};
 use tokio::{net::UdpSocket, spawn, sync::RwLock};
@@ -6,10 +6,17 @@ use torrent_rs::{
     data::{
         metainfo::Metainfo,
         tracker::{TrackerRequest, TrackingEvent},
-    }, make_global, net::{UdpConnection, UdpManager}, peer::{peer_handle_main, PeerList}, util::{ApplyTransform, IntoHexString}, InfoHash, PeerId, SingleTorrent, TorrentContext
+    },
+    make_global,
+    net::{UdpConnection, UdpManager},
+    peer::{peer_handle_main, PeerList},
+    piece::TorrentFile,
+    util::{ApplyTransform, IntoHexString},
+    InfoHash, PeerId, SingleTorrent, TorrentContext, TorrentFiles,
 };
 
-const TEST_TORRENT_FILE: &'static str = "the-northman.torrent";
+const TEST_TORRENT_FILE: &'static str = "godel.torrent";
+// const TEST_TORRENT_FILE: &'static str = "the-northman.torrent";
 const PEER_ID: &'static str = "123456789--qweasdzxc";
 const TRACKER_URL: &'static str = "http://thetracker.org/announce";
 
@@ -23,6 +30,7 @@ async fn main() {
     let info_hash: [u8; 20] = sha1_hasher.finalize().into();
 
     let piece_hashes = metainfo.info.get_pieces_as_sha1_hex();
+    let piece_hashes_count = piece_hashes.len();
 
     let context = make_global!(TorrentContext {
         self_peer_id: PeerId::from_raw(PEER_ID.as_bytes().try_into().unwrap()),
@@ -30,12 +38,31 @@ async fn main() {
             id: 0,
             info_hash: InfoHash::from_raw(info_hash),
             piece_length: metainfo.info.piece_length,
-            piece_count: piece_hashes.len(),
+            piece_count: piece_hashes_count,
             piece_hashes: piece_hashes.into(),
         }],
     });
-    // let udp_socket = Arc::new(UdpSocket::bind("0.0.0.0:8080").await.unwrap());
-    // let udp_connection = UdpConnection::new(UdpManager::new("0.0.0.0:8080").await.unwrap());
+
+    let file_length = metainfo.info.mode.unwrap_as_single().length;
+
+    let path = metainfo.info.name;
+    let piece_count = piece_hashes_count as u32;
+    let piece_length = metainfo.info.piece_length;
+    let end_piece_length = (file_length - ((piece_count - 1) as u64 * piece_length as u64)) as u32;
+
+    dbg!(&path);
+
+    let torrent_files: TorrentFiles = [(
+        0,
+        make_global!(TorrentFile::new(
+            &path,
+            piece_count,
+            piece_length,
+            end_piece_length
+        ).await.unwrap()),
+    )]
+    .into_iter()
+    .collect();
 
     let trackers = metainfo
         .announce_list

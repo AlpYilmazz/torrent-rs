@@ -12,7 +12,7 @@ use torrent_rs::{
     peer::{peer_handle_main, PeerList},
     piece::TorrentFile,
     util::{ApplyTransform, IntoHexString},
-    InfoHash, PeerId, SingleTorrent, TorrentContext, TorrentFiles,
+    InfoHash, PeerId, SingleTorrent, TorrentContext, TorrentCollection,
 };
 
 const TEST_TORRENT_FILE: &'static str = "godel.torrent";
@@ -50,15 +50,13 @@ async fn main() {
     let piece_length = metainfo.info.piece_length;
     let end_piece_length = (file_length - ((piece_count - 1) as u64 * piece_length as u64)) as u32;
 
-    dbg!(&path);
-
-    let torrent_files: TorrentFiles = [(
+    let torrent_files: TorrentCollection = [(
         0,
         make_global!(TorrentFile::new(
             &path,
-            piece_count,
-            piece_length,
-            end_piece_length
+            file_length,
+            piece_count as usize,
+            piece_length as usize,
         ).await.unwrap()),
     )]
     .into_iter()

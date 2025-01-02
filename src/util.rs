@@ -1,5 +1,25 @@
 use serde_bytes::ByteBuf;
 
+pub fn create_buffer(len: usize) -> Box<[u8]> {
+    if len == 0 {
+        return <Box<[u8]>>::default();
+    }
+    let layout = std::alloc::Layout::array::<u8>(len).unwrap();
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+    let slice_ptr = core::ptr::slice_from_raw_parts_mut(ptr, len);
+    unsafe { Box::from_raw(slice_ptr) }
+}
+
+pub fn create_struct_buffer<T: Sized>(len: usize) -> Box<[T]> {
+    if len == 0 {
+        return <Box<[T]>>::default();
+    }
+    let layout = std::alloc::Layout::array::<T>(len).unwrap();
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) as *mut T };
+    let slice_ptr = core::ptr::slice_from_raw_parts_mut(ptr, len);
+    unsafe { Box::from_raw(slice_ptr) }
+}
+
 pub fn encode_as_hex_string(bytes: &[u8]) -> String {
     bytes
         .iter()

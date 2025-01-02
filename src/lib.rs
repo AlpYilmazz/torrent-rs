@@ -67,7 +67,7 @@ pub struct SingleTorrent {
     pub piece_hashes: Arc<[String]>,
 }
 
-pub type TorrentFiles = HashMap<TorrentId, Global<TorrentFile>>;
+pub type TorrentCollection = HashMap<TorrentId, Global<TorrentFile>>;
 
 #[cfg(test)]
 mod tests {

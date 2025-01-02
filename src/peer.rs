@@ -30,7 +30,7 @@ use crate::{
         self, Handshake, PeerMessage, PEER_MESSAGE_BITFIELD, PEER_MESSAGE_CANCEL,
         PEER_MESSAGE_CHOKE, PEER_MESSAGE_HAVE, PEER_MESSAGE_INTERESTED, PEER_MESSAGE_NOTINTERESTED,
         PEER_MESSAGE_PIECE, PEER_MESSAGE_REQUEST, PEER_MESSAGE_UNCHOKE,
-    }, make_global, util::UnifyError, Global, InfoHash, PeerId, SingleTorrent, TorrentContext, TorrentId
+    }, make_global, util::{self, UnifyError}, Global, InfoHash, PeerId, SingleTorrent, TorrentContext, TorrentId
 };
 
 // pub struct Peer {
@@ -313,13 +313,7 @@ pub type SendChannels = HashMap<usize, Sender<SendPeerMessage>>;
 
 pub fn create_peer_network_buffer(piece_length: u32) -> Box<[u8]> {
     let len = 256 + piece_length as usize;
-    if len == 0 {
-        return <Box<[u8]>>::default();
-    }
-    let layout = std::alloc::Layout::array::<u8>(len).unwrap();
-    let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
-    let slice_ptr = core::ptr::slice_from_raw_parts_mut(ptr, len);
-    unsafe { Box::from_raw(slice_ptr) }
+    util::create_buffer(len)
 }
 
 pub struct PeerConnectionInit {

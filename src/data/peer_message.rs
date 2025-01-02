@@ -1,7 +1,5 @@
-use std::rc::Rc;
-
 use bytepack::{
-    base::{ConstByteSize, ByteSize, SplatDrain, Throw},
+    base::{ByteSize, ConstByteSize, SplatDrain, Throw},
     pack::BytePack,
     unpack::ByteUnpack,
 };
@@ -9,9 +7,9 @@ use bytepack_proc_macro::{BytePack, ByteSize, ByteUnpack, ConstByteSize};
 
 #[derive(Debug, ConstByteSize, ByteSize, BytePack, ByteUnpack)]
 pub struct Handshake {
-    pub protocol_len: u8,           // char: 19
-    pub protocol: [u8; 19],    // 'BitTorrent protocol'
-    pub reserved: Throw<u8, 8>,   // reserved for extensions
+    pub protocol_len: u8,       // char: 19
+    pub protocol: [u8; 19],     // 'BitTorrent protocol'
+    pub reserved: Throw<u8, 8>, // reserved for extensions
     pub info_hash: [u8; 20],
     pub peer_id: [u8; 20],
 }
@@ -90,17 +88,18 @@ impl PeerMessage {
 
 impl ByteSize for PeerMessage {
     fn byte_size(&self) -> usize {
-        u8::const_byte_size() + match self {
-            Self::Choke => 0,
-            Self::Unchoke => 0,
-            Self::Interested => 0,
-            Self::NotInterested => 0,
-            Self::Have(_) => Have::const_byte_size(),
-            Self::Bitfield(b) => b.byte_size(),
-            Self::Request(_) => Request::const_byte_size(),
-            Self::Piece(p) => p.byte_size(),
-            Self::Cancel(_) => Cancel::const_byte_size(),
-        }
+        u8::const_byte_size()
+            + match self {
+                Self::Choke => 0,
+                Self::Unchoke => 0,
+                Self::Interested => 0,
+                Self::NotInterested => 0,
+                Self::Have(_) => Have::const_byte_size(),
+                Self::Bitfield(b) => b.byte_size(),
+                Self::Request(_) => Request::const_byte_size(),
+                Self::Piece(p) => p.byte_size(),
+                Self::Cancel(_) => Cancel::const_byte_size(),
+            }
     }
 }
 
@@ -114,7 +113,7 @@ impl BytePack for PeerMessage {
             Self::Request(m) => m.pack(buf),
             Self::Piece(m) => m.pack(buf),
             Self::Cancel(m) => m.pack(buf),
-            _ => Ok(())
+            _ => Ok(()),
         }
     }
 }

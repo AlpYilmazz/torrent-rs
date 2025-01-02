@@ -67,3 +67,19 @@ impl<T, TErr: ToString> UnifyError<TErr> for Result<T, TErr> {
         self.map_err(|e| (id, e.to_string()))
     }
 }
+
+pub fn unimpl_create<T>() -> T {
+    unimplemented!()
+}
+
+pub fn unimpl_get_from<TFrom, TGet>(_: TFrom) -> TGet {
+    unimplemented!()
+}
+
+pub fn unimpl_get_ref<TFrom, TGet>(_: &TFrom) -> &TGet {
+    unimplemented!()
+}
+
+pub fn unimpl_get_mut<TFrom, TGet>(_: &mut TFrom) -> &mut TGet {
+    unimplemented!()
+}

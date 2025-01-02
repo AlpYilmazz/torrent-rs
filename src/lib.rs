@@ -1,18 +1,18 @@
 use core::str;
 use std::{collections::HashMap, sync::Arc};
 
-use piece::TorrentFile;
+use fileio::TorrentFile;
 
 pub mod data;
-pub mod piece;
-pub mod net;
 pub mod peer;
+pub mod fileio;
 pub mod tracker;
 pub mod util;
 
 pub type Global<T> = std::sync::Arc<tokio::sync::RwLock<T>>;
 
-#[macro_export] macro_rules! make_global {
+#[macro_export]
+macro_rules! make_global {
     ($expr: expr) => {
         std::sync::Arc::new(tokio::sync::RwLock::new($expr))
     };
@@ -71,11 +71,12 @@ pub type TorrentCollection = HashMap<TorrentId, Global<TorrentFile>>;
 
 #[cfg(test)]
 mod tests {
+    use serde_bytes::ByteBuf;
     use sha1::{Digest, Sha1};
 
     use crate::{
         data::{
-            metainfo::Metainfo,
+            metainfo::{FileMode, Metainfo, SingleFile},
             tracker::{TrackerRequest, TrackingEvent},
         },
         util::{ApplyTransform, IntoHexString},
@@ -108,17 +109,16 @@ mod tests {
         };
         dbg!(tracker_request);
 
-        /*
         // let pieces = String::from_utf8(
         //     metainfo.info.pieces.clone().into_vec().into_iter().take(20).collect::<Vec<_>>()
         // ).unwrap();
 
-        let FileMode::SingleFile { length, md5sum } = &metainfo.info.mode else {
+        let FileMode::SingleFile(SingleFile { length, .. }) = &metainfo.info.mode else {
             Result::<(), ()>::Err(()).unwrap();
             return;
         };
-        let num_pieces = (length / metainfo.info.piece_length)
-            + (length % metainfo.info.piece_length > 0) as u64;
+        let num_pieces = (length / metainfo.info.piece_length as u64)
+            + (length % metainfo.info.piece_length as u64 > 0) as u64;
 
         let pieces_bytes_len = metainfo.info.pieces.len();
         let pieces = metainfo.info.get_pieces_as_sha1_hex();
@@ -138,6 +138,5 @@ mod tests {
         dbg!(pieces_bytes_len);
         dbg!(pieces_len);
         dbg!(num_pieces);
-        */
     }
 }

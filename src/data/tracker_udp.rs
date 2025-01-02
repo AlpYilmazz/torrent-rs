@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use bytepack::{
     base::{ByteSize, DrainVec, SplatVec},
@@ -79,7 +79,7 @@ pub struct AnnounceRequest {
     pub action: u32, // 1: action::ANNOUNCE
     pub transaction_id: u32,
     pub info_hash: Arc<[u8; 20]>, // 20 bytes
-    pub peer_id: Arc<[u8; 20]>,    // 20 bytes
+    pub peer_id: Arc<[u8; 20]>,   // 20 bytes
     pub downloaded: u64,
     pub left: u64,
     pub uploaded: u64,

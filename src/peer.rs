@@ -1,7 +1,7 @@
 use core::str;
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
     rc::Rc,
     sync::Arc,
@@ -30,7 +30,11 @@ use crate::{
         self, Handshake, PeerMessage, PEER_MESSAGE_BITFIELD, PEER_MESSAGE_CANCEL,
         PEER_MESSAGE_CHOKE, PEER_MESSAGE_HAVE, PEER_MESSAGE_INTERESTED, PEER_MESSAGE_NOTINTERESTED,
         PEER_MESSAGE_PIECE, PEER_MESSAGE_REQUEST, PEER_MESSAGE_UNCHOKE,
-    }, make_global, util::{self, UnifyError}, Global, InfoHash, PeerId, SingleTorrent, TorrentContext, TorrentId
+    },
+    make_global,
+    fileio::{PieceResult, TorrentFile},
+    util::{self, UnifyError},
+    Global, InfoHash, PeerId, SingleTorrent, TorrentCollection, TorrentContext, TorrentId,
 };
 
 // pub struct Peer {
@@ -294,11 +298,25 @@ impl PeerList {
     }
 }
 
-pub struct Torrents {
-    pub peer_lists: HashMap<TorrentId, PeerList>,
+pub struct PieceRequestItem {
+    torrent_id: TorrentId,
+    peer_index: usize,
+    request: peer_message::Request,
+    cancelled: bool,
 }
 
+// pub struct PieceRequestQueue {
+//     queue: Vec<PieceRequestItem>,
+// }
+
+pub type PieceRequestQueue = VecDeque<PieceRequestItem>;
+
+// pub struct Torrents {
+//     pub peer_lists: HashMap<TorrentId, PeerList>,
+// }
+
 pub struct ReceivedPeerMessage {
+    pub torrent_id: TorrentId,
     pub peer_index: usize,
     pub peer_id: PeerId,
     pub message: PeerMessage,
@@ -475,21 +493,25 @@ pub async fn initiate_peer_connection(
 
 pub async fn peer_handle_main(
     torrent_context: Global<TorrentContext>,
-    peer_addrs: Arc<std::sync::Mutex<(TorrentId, Vec<SocketAddr>)>>,
+    torrent_collection: Global<TorrentCollection>,
+    // peer_addrs: Arc<std::sync::Mutex<(TorrentId, Vec<SocketAddr>)>>,
+    mut peer_addrs_channel: Receiver<(TorrentId, Arc<[SocketAddr]>)>,
 ) {
-    // let peer_list = Arc::new(RwLock::new(PeerList::new()));
     let peer_list = make_global!(PeerList::new());
     let send_channels = make_global!(HashMap::<usize, Sender<SendPeerMessage>>::new());
+    let piece_request_queue = make_global!(VecDeque::with_capacity(100));
     let server_listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
     let (received_message_channel_sender, received_message_channel_receiver) =
         mpsc::channel::<ReceivedPeerMessage>(100);
 
-    let message_handler = tokio::spawn(spin_handle_peer_messages(
+    let message_handler_join = tokio::spawn(spin_handle_peer_messages(
+        torrent_collection.clone(),
         peer_list.clone(),
+        piece_request_queue.clone(),
         received_message_channel_receiver,
     ));
 
-    let server = tokio::spawn(spin_peer_server(
+    let server_join = tokio::spawn(spin_peer_server(
         torrent_context.clone(),
         peer_list.clone(),
         send_channels.clone(),
@@ -500,12 +522,15 @@ pub async fn peer_handle_main(
     loop {
         tokio::time::sleep(tokio::time::Duration::from_millis(1 * 1000)).await;
 
+        let Some((torrent_id, peer_addrs)) = peer_addrs_channel.recv().await else {
+            break; // channel closed
+        };
+
         {
             let mut peer_list_write = peer_list.write().await;
             let torrent_context_read = torrent_context.read().await;
-            let mut peer_addrs = peer_addrs.lock().unwrap();
-            let st = torrent_context_read.torrents.get(peer_addrs.0).unwrap();
-            peer_list_write.add_peers(st, peer_addrs.1.drain(..));
+            let st = torrent_context_read.torrents.get(torrent_id).unwrap();
+            peer_list_write.add_peers(st, peer_addrs.iter().cloned());
         }
 
         let peer_list_read = peer_list.read().await;
@@ -588,6 +613,14 @@ pub async fn peer_handle_main(
             });
         }
     }
+    // Peer addr channel has been closed
+    // No new peers will arrive
+    // But can still work with existing peers
+
+    // TODO: what to do
+
+    message_handler_join.await;
+    server_join.await;
 }
 
 pub async fn spin_piece_requester(
@@ -595,6 +628,7 @@ pub async fn spin_piece_requester(
     peer_list: Global<PeerList>,
     send_channels: Global<SendChannels>,
 ) {
+    // TODO
 }
 
 pub async fn spin_send_peer_message(
@@ -625,20 +659,91 @@ pub async fn spin_send_peer_message(
     }
 }
 
-pub async fn handle_piece_request(peer: Global<Peer>, request: peer_message::Request) {
-    todo!()
+pub async fn handle_piece_request(piece_request_queue: Global<PieceRequestQueue>, peer: Global<Peer>, request: peer_message::Request) {
+    let peer_choked = false; // TODO
+    let peer_interested = true; // TODO
+    if peer_choked || !peer_interested {
+        return;
+    }
+
+    let (torrent_id, peer_index) = {
+        let peer_read = peer.read().await;
+        (peer_read.torrent_id, peer_read.index)
+    };
+
+    let mut piece_request_queue_write = piece_request_queue.write().await;
+
+    let request_exists = piece_request_queue_write
+        .iter()
+        .any(|rq| {
+            rq.peer_index == peer_index
+                && rq.request.index == request.index
+                && rq.request.begin == request.begin
+        });
+
+    if request_exists {
+        // TODO: limit per peer requests
+        piece_request_queue_write.push_back(PieceRequestItem {
+            torrent_id,
+            peer_index,
+            request,
+            cancelled: false,
+        });
+    }
 }
 
-pub async fn handle_piece_download(peer: Global<Peer>, piece: peer_message::Piece) {
+fn unimpl_get_piece_hash() -> &'static str {
     todo!()
 }
+pub async fn handle_piece_download(
+    torrent_file: Global<TorrentFile>,
+    peer: Global<Peer>,
+    piece: peer_message::Piece,
+) {
+    let piece_hash = unimpl_get_piece_hash();
 
-pub async fn handle_cancel_request(peer: Global<Peer>, cancel: peer_message::Cancel) {
-    todo!()
+    let mut torrent_file_write = torrent_file.write().await;
+    torrent_file_write.write_piece_chunk(piece.index as usize, piece.begin as usize, &piece.piece);
+
+    match torrent_file_write.check_piece(piece.index as usize, piece_hash) {
+        PieceResult::Success => {
+            torrent_file_write
+                .flush_piece(piece.index as usize)
+                .await
+                .unwrap(); // TODO retry if fails
+        }
+        PieceResult::NotComplete => {}
+        PieceResult::IntegrityFault => {
+            torrent_file_write.reset_piece(piece.index as usize);
+        }
+    }
+}
+
+pub async fn handle_cancel_request(piece_request_queue: Global<PieceRequestQueue>, peer: Global<Peer>, cancel: peer_message::Cancel) {
+    let peer_index = {
+        let peer_read = peer.read().await;
+        peer_read.index
+    };
+
+    let mut piece_request_queue_write = piece_request_queue.write().await;
+
+    let Some(rq) =
+        piece_request_queue_write
+            .iter_mut()
+            .find(|rq| {
+                rq.peer_index == peer_index && rq.request.index == cancel.index && rq.request.begin == cancel.begin
+            })
+    else {
+        return;
+    };
+
+    rq.cancelled = true;
 }
 
 pub async fn spin_handle_peer_messages(
+    torrent_collection: Global<TorrentCollection>,
     peer_list: Global<PeerList>,
+    piece_request_queue: Global<PieceRequestQueue>,
     mut message_channel: Receiver<ReceivedPeerMessage>,
 ) -> anyhow::Result<()> {
     loop {
@@ -652,18 +757,24 @@ pub async fn spin_handle_peer_messages(
             received_peer_message.message.message_type()
         );
 
+        let torrent_id = received_peer_message.torrent_id;
         let peer_index = received_peer_message.peer_index;
         let _peer_id = received_peer_message.peer_id;
         let message = received_peer_message.message;
 
-        let peer_list_clone = peer_list.clone();
+        let peer = {
+            let peer_list_read = peer_list.read().await;
+            peer_list_read.get_peer_by_index(peer_index)
+        };
+        let torrent_file = {
+            let torrent_collection_read = torrent_collection.read().await;
+            torrent_collection_read.get(&torrent_id).unwrap().clone()
+        };
+        let piece_request_queue_clone = piece_request_queue.clone();
 
         tokio::spawn(async move {
-            let peer = {
-                let peer_list_read = peer_list_clone.read().await;
-                peer_list_read.get_peer_by_index(peer_index)
-            };
-
+            let peer = peer;
+            let torrent_file = torrent_file;
             match message {
                 PeerMessage::Choke => {
                     let mut peer_write = peer.write().await;
@@ -695,13 +806,13 @@ pub async fn spin_handle_peer_messages(
                         .collect();
                 }
                 PeerMessage::Request(request) => {
-                    handle_piece_request(peer, request).await;
+                    handle_piece_request(piece_request_queue_clone, peer, request).await;
                 }
                 PeerMessage::Piece(piece) => {
-                    handle_piece_download(peer, piece).await;
+                    handle_piece_download(torrent_file, peer, piece).await;
                 }
                 PeerMessage::Cancel(cancel) => {
-                    handle_cancel_request(peer, cancel).await;
+                    handle_cancel_request(piece_request_queue_clone, peer, cancel).await;
                 }
             }
         });
@@ -764,6 +875,7 @@ pub async fn spin_receive_peer_message(
                 PeerMessage::Request(pm_request)
             }
             PEER_MESSAGE_PIECE => {
+                // TODO: can wait for multiple pieces, piece requests could be buffered
                 let Some(piece_len) = peer.state.waiting_on.as_ref().map(|w| w.length) else {
                     bail!("Not expecting a piece to arrive");
                 };
@@ -794,6 +906,7 @@ pub async fn spin_receive_peer_message(
 
         message_channel
             .send(ReceivedPeerMessage {
+                torrent_id: peer.torrent_id,
                 peer_index: peer.index,
                 peer_id: peer.peer_id,
                 message: peer_msg,

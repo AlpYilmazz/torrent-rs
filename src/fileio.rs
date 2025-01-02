@@ -1,6 +1,5 @@
 use std::{io::SeekFrom, path::Path};
 
-use anyhow::bail;
 use sha1::{Digest, Sha1};
 use tokio::{
     fs::File,
@@ -15,8 +14,147 @@ const CHUNK_SIZE: usize = 1 << CHUNK_SIZE_POW2;
 #[derive(Clone, Copy, Debug)]
 pub enum PieceResult {
     Success,
-    NotCompleted,
+    NotComplete,
     IntegrityFault,
+}
+
+pub struct PieceChunk {
+    pub begin: usize,
+    pub length: usize,
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct PieceState {
+    started: bool,
+    completed: bool,
+}
+
+pub struct TorrentFile {
+    file_length: u64,
+    piece_count: usize,
+    piece_length: usize,
+    // end_piece_length: usize,
+    // --
+    file: File,
+    file_state: Box<[PieceState]>,
+    piece_buffers: Box<[Option<PieceBuffer>]>,
+}
+
+impl TorrentFile {
+    pub async fn new(
+        path: &str,
+        file_length: u64,
+        piece_count: usize,
+        piece_length: usize,
+    ) -> anyhow::Result<Self> {
+        let path = sanitize_filename::sanitize_with_options(
+            path,
+            sanitize_filename::Options {
+                windows: true,
+                truncate: true,
+                replacement: "_",
+            },
+        );
+
+        let file_exists = Path::new(&path).exists();
+        let file = if file_exists {
+            File::options().write(true).open(&path).await?
+        } else {
+            let mut file = File::create(&path).await?;
+            file.seek(SeekFrom::Start(file_length - 1)).await?;
+            file.write_all(&[0]).await?;
+            file
+        };
+
+        Ok(Self {
+            file_length,
+            piece_count,
+            piece_length,
+            file,
+            file_state: (0..piece_count).map(|_| PieceState::default()).collect(),
+            piece_buffers: (0..piece_count).map(|_| None).collect(),
+            // piece_buffers: (0..piece_count).map(|_| PieceBuffer::new(piece_length)).collect(),
+            // piece_buffers: (0..piece_count - 1)
+            //     .map(|_| PieceBuffer::new(piece_length))
+            //     .chain(std::iter::once(PieceBuffer::new(
+            //         end_piece_length,
+            //     )))
+            //     .collect(),
+        })
+    }
+
+    fn end_piece_length(&self) -> usize {
+        (self.file_length - ((self.piece_count - 1) as u64 * self.piece_length as u64)) as usize
+    }
+
+    fn get_piece_length(&self, index: usize) -> usize {
+        if index != self.piece_count - 1 { self.piece_length } else { self.end_piece_length() }
+    }
+
+    fn get_cursor_pos(&self, index: usize, begin: usize) -> u64 {
+        (index as u64 * self.piece_length as u64) + begin as u64
+    }
+
+    pub fn next_piece_chunk(&mut self, index: usize) -> Option<PieceChunk> {
+        if !self.file_state[index].started {
+            let piece_length = self.get_piece_length(index);
+            self.piece_buffers[index] = Some(PieceBuffer::new(piece_length));
+            self.file_state[index].started = true;
+            self.file_state[index].completed = false;
+        }
+
+        let piece = self.piece_buffers[index].as_ref().unwrap();
+        piece.next_chunk()
+    }
+
+    pub fn write_piece_chunk(&mut self, index: usize, begin: usize, chunk: &[u8]) {
+        if !self.file_state[index].started {
+            let piece_length = self.get_piece_length(index);
+            self.piece_buffers[index] = Some(PieceBuffer::new(piece_length));
+            self.file_state[index].started = true;
+            self.file_state[index].completed = false;
+        }
+
+        let piece = self.piece_buffers[index].as_mut().unwrap();
+        piece.write_chunk(begin, chunk);
+    }
+
+    pub async fn flush_piece(&mut self, index: usize) -> anyhow::Result<()> {
+        // if !self.file_state[index].completed {
+        //     bail!("Piece not yet completed.");
+        // }
+
+        self.file
+            .seek(SeekFrom::Start(self.get_cursor_pos(index, 0)))
+            .await?;
+
+        let piece = &self.piece_buffers[index].as_ref().unwrap().piece;
+        self.file.write_all(piece).await?;
+
+        self.file_state[index].completed = true;
+        let _ = self.piece_buffers[index].take();
+
+        Ok(())
+    }
+
+    pub fn reset_piece(&mut self, index: usize) {
+        self.file_state[index].started = false;
+        self.file_state[index].completed = false;
+        if let Some(p) = self.piece_buffers[index].as_mut() {
+            p.reset();
+        }
+    }
+
+    pub fn check_piece(&self, index: usize, piece_hash: &str) -> PieceResult {
+        if self.file_state[index].completed {
+            return PieceResult::Success;
+        }
+        if !self.file_state[index].started {
+            return PieceResult::NotComplete;
+        }
+
+        self.piece_buffers[index].as_ref().unwrap().check_piece(piece_hash)
+    }
 }
 
 pub struct ChunkState {
@@ -90,7 +228,7 @@ impl PieceBuffer {
             cs.is_filled
         });
         if !all_filled {
-            return PieceResult::NotCompleted;
+            return PieceResult::NotComplete;
         }
 
         let mut sha1_hasher = Sha1::new();
@@ -105,149 +243,6 @@ impl PieceBuffer {
         } else {
             PieceResult::IntegrityFault
         }
-    }
-}
-
-pub struct PieceChunk {
-    pub begin: usize,
-    pub length: usize,
-}
-
-#[derive(Default, Clone, Copy)]
-pub struct PieceState {
-    started: bool,
-    completed: bool,
-}
-
-pub struct TorrentFile {
-    file_length: u64,
-    piece_count: usize,
-    piece_length: usize,
-    // end_piece_length: usize,
-    // --
-    file: File,
-    file_state: Box<[PieceState]>,
-    piece_buffers: Box<[Option<PieceBuffer>]>,
-}
-
-impl TorrentFile {
-    pub async fn new(
-        path: &str,
-        file_length: u64,
-        piece_count: usize,
-        piece_length: usize,
-    ) -> anyhow::Result<Self> {
-        let path = sanitize_filename::sanitize_with_options(
-            path,
-            sanitize_filename::Options {
-                windows: true,
-                truncate: true,
-                replacement: "_",
-            },
-        );
-
-        let file_exists = Path::new(&path).exists();
-        let file = if file_exists {
-            File::options().write(true).open(&path).await?
-        } else {
-            let mut file = File::create(&path).await?;
-            file.seek(SeekFrom::Start(file_length - 1)).await?;
-            file.write_all(&[0]).await?;
-            file
-        };
-
-        Ok(Self {
-            file_length,
-            piece_count,
-            piece_length,
-            file,
-            file_state: (0..piece_count).map(|_| PieceState::default()).collect(),
-            piece_buffers: (0..piece_count).map(|_| None).collect(),
-            // piece_buffers: (0..piece_count).map(|_| PieceBuffer::new(piece_length)).collect(),
-            // piece_buffers: (0..piece_count - 1)
-            //     .map(|_| PieceBuffer::new(piece_length))
-            //     .chain(std::iter::once(PieceBuffer::new(
-            //         end_piece_length,
-            //     )))
-            //     .collect(),
-        })
-    }
-
-    // TODO: might be wrong
-    fn end_piece_length(&self) -> usize {
-        let end_piece_length = (self.file_length - ((self.piece_count - 1) as u64 * self.piece_length as u64)) as usize;
-        println!("end piece: {}, {}, {}, {}",
-            end_piece_length, self.file_length, self.piece_count, self.piece_length);
-        end_piece_length
-    }
-
-    fn get_piece_length(&self, index: usize) -> usize {
-        if index != self.piece_count - 1 { self.piece_length } else { self.end_piece_length() }
-    }
-
-    fn get_cursor_pos(&self, index: usize, begin: usize) -> u64 {
-        (index as u64 * self.piece_length as u64) + begin as u64
-    }
-
-    pub fn next_piece_chunk(&mut self, index: usize) -> Option<PieceChunk> {
-        if !self.file_state[index].started {
-            let piece_length = self.get_piece_length(index);
-            self.piece_buffers[index] = Some(PieceBuffer::new(piece_length));
-            self.file_state[index].started = true;
-            self.file_state[index].completed = false;
-        }
-
-        let piece = self.piece_buffers[index].as_ref().unwrap();
-        piece.next_chunk()
-    }
-
-    pub fn write_piece_chunk(&mut self, index: usize, begin: usize, chunk: &[u8]) {
-        if !self.file_state[index].started {
-            let piece_length = self.get_piece_length(index);
-            self.piece_buffers[index] = Some(PieceBuffer::new(piece_length));
-            self.file_state[index].started = true;
-            self.file_state[index].completed = false;
-        }
-
-        let piece = self.piece_buffers[index].as_mut().unwrap();
-        piece.write_chunk(begin, chunk);
-    }
-
-    pub async fn flush_piece(&mut self, index: usize) -> anyhow::Result<()> {
-        // if !self.file_state[index].completed {
-        //     bail!("Piece not yet completed.");
-        // }
-
-        self.file
-            .seek(SeekFrom::Start(self.get_cursor_pos(index, 0)))
-            .await?;
-
-        let piece = &self.piece_buffers[index].as_ref().unwrap().piece;
-        self.file.write_all(piece).await?;
-
-        self.file_state[index].completed = true;
-        let _ = self.piece_buffers[index].take();
-
-        Ok(())
-    }
-
-    pub fn reset_piece(&mut self, index: usize) {
-        self.file_state[index].started = false;
-        self.file_state[index].completed = false;
-        if let Some(p) = self.piece_buffers[index].as_mut() {
-            p.reset();
-        }
-    }
-
-    pub fn check_piece(&self, index: usize, piece_hash: &str) -> PieceResult {
-        if self.file_state[index].completed {
-            return PieceResult::Success;
-        }
-        if !self.file_state[index].started {
-            return PieceResult::NotCompleted;
-        }
-
-        self.piece_buffers[index].as_ref().unwrap().check_piece(piece_hash)
     }
 }
 
@@ -266,8 +261,8 @@ mod tests {
     fn copy_file_random() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
-            let path = "Godel.pdf";
-            let torrent_path = "Godel-torrent.pdf";
+            let path = "res/Godel.pdf";
+            let torrent_path = "res/Godel-torrent.pdf";
 
             let file_length = Path::new(path).metadata().unwrap().len();
             let piece_length = 2 * CHUNK_SIZE;
@@ -331,7 +326,7 @@ mod tests {
                         torrent_file.flush_piece(piece_index).await.unwrap();
                         piece_index += 1;
                     },
-                    PieceResult::NotCompleted => {},
+                    PieceResult::NotComplete => {},
                     PieceResult::IntegrityFault => {
                         torrent_file.reset_piece(piece_index);
                     },

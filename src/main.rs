@@ -1,24 +1,23 @@
-use std::{array, collections::HashMap, iter, net::ToSocketAddrs, rc::Rc, sync::Arc, time::Duration};
-
-use sha1::{Digest, Sha1};
-use tokio::{net::UdpSocket, spawn, sync::RwLock};
-use torrent_rs::{
-    data::{
-        metainfo::Metainfo,
-        tracker::{TrackerRequest, TrackingEvent},
-    },
-    make_global,
-    net::{UdpConnection, UdpManager},
-    peer::{peer_handle_main, PeerList},
-    piece::TorrentFile,
-    util::{ApplyTransform, IntoHexString},
-    InfoHash, PeerId, SingleTorrent, TorrentContext, TorrentCollection,
+use std::{
+    iter,
+    net::{SocketAddr, ToSocketAddrs},
+    sync::Arc,
 };
 
-const TEST_TORRENT_FILE: &'static str = "godel.torrent";
-// const TEST_TORRENT_FILE: &'static str = "the-northman.torrent";
+use sha1::{Digest, Sha1};
+use tokio::sync::mpsc;
+use torrent_rs::{
+    data::metainfo::{FileMode, Metainfo},
+    make_global,
+    peer::peer_handle_main,
+    fileio::TorrentFile,
+    Global, InfoHash, PeerId, SingleTorrent, TorrentCollection, TorrentContext, TorrentId,
+};
+
+const TEST_TORRENT_FILE: &'static str = "res/godel.torrent";
+// const TEST_TORRENT_FILE: &'static str = "res/the-northman.torrent";
 const PEER_ID: &'static str = "123456789--qweasdzxc";
-const TRACKER_URL: &'static str = "http://thetracker.org/announce";
+// const TRACKER_URL: &'static str = "http://thetracker.org/announce";
 
 #[tokio::main]
 async fn main() {
@@ -32,10 +31,11 @@ async fn main() {
     let piece_hashes = metainfo.info.get_pieces_as_sha1_hex();
     let piece_hashes_count = piece_hashes.len();
 
+    let torrent_id = 0;
     let context = make_global!(TorrentContext {
         self_peer_id: PeerId::from_raw(PEER_ID.as_bytes().try_into().unwrap()),
         torrents: vec![SingleTorrent {
-            id: 0,
+            id: torrent_id,
             info_hash: InfoHash::from_raw(info_hash),
             piece_length: metainfo.info.piece_length,
             piece_count: piece_hashes_count,
@@ -43,24 +43,30 @@ async fn main() {
         }],
     });
 
-    let file_length = metainfo.info.mode.unwrap_as_single().length;
+    let FileMode::SingleFile(single_file) = metainfo.info.mode else {
+        println!("MultipleFiles torrents are not yet supported.");
+        return;
+    };
+    let file_length = single_file.length;
 
     let path = metainfo.info.name;
     let piece_count = piece_hashes_count as u32;
     let piece_length = metainfo.info.piece_length;
-    let end_piece_length = (file_length - ((piece_count - 1) as u64 * piece_length as u64)) as u32;
+    // let end_piece_length = (file_length - ((piece_count - 1) as u64 * piece_length as u64)) as u32;
 
-    let torrent_files: TorrentCollection = [(
-        0,
+    let torrent_collection: Global<TorrentCollection> = make_global!([(
+        torrent_id,
         make_global!(TorrentFile::new(
             &path,
             file_length,
             piece_count as usize,
             piece_length as usize,
-        ).await.unwrap()),
+        )
+        .await
+        .unwrap()),
     )]
     .into_iter()
-    .collect();
+    .collect());
 
     let trackers = metainfo
         .announce_list
@@ -71,12 +77,23 @@ async fn main() {
         .collect::<Vec<_>>();
     dbg!(&trackers);
 
-    let peer_addrs = Arc::new(std::sync::Mutex::new((
-        0,
-        vec!["127.0.0.1:8080".to_socket_addrs().unwrap().next().unwrap()],
-    )));
+    let (peer_addrs_channel_sender, peer_addrs_channel_receiver) =
+        mpsc::channel::<(TorrentId, Arc<[SocketAddr]>)>(100);
 
-    let client = tokio::spawn(peer_handle_main(context.clone(), peer_addrs.clone()));
+    let client = tokio::spawn(peer_handle_main(
+        context.clone(),
+        torrent_collection,
+        peer_addrs_channel_receiver,
+    ));
+
+    tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
+    while let Ok(()) = peer_addrs_channel_sender
+        .send((
+            torrent_id,
+            Arc::new(["127.0.0.1:8080".to_socket_addrs().unwrap().next().unwrap()]),
+        ))
+        .await
+    {}
 
     client.await.unwrap();
 

@@ -4,8 +4,8 @@ use std::{collections::HashMap, sync::Arc};
 use fileio::TorrentFile;
 
 pub mod data;
-pub mod peer;
 pub mod fileio;
+pub mod peer;
 pub mod tracker;
 pub mod util;
 
@@ -56,7 +56,16 @@ pub type TorrentId = usize;
 
 pub struct TorrentContext {
     pub self_peer_id: PeerId,
-    pub torrents: Vec<SingleTorrent>,
+    pub torrents: Vec<Arc<SingleTorrent>>,
+}
+
+impl TorrentContext {
+    pub fn new(self_peer_id: &str) -> Self {
+        Self {
+            self_peer_id: PeerId::from_raw(self_peer_id.as_bytes().try_into().unwrap()),
+            torrents: Vec::new(),
+        }
+    }
 }
 
 pub struct SingleTorrent {

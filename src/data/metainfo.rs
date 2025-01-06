@@ -16,7 +16,7 @@ pub enum TorrentFileError {
     IOError(#[from] std::io::Error),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metainfo {
     pub info: Info,
     pub announce: String,
@@ -57,7 +57,7 @@ impl Metainfo {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Info {
     #[serde(rename = "piece length")]
     pub piece_length: u32,
@@ -82,7 +82,7 @@ impl Info {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum FileMode {
     SingleFile(SingleFile),
@@ -105,18 +105,18 @@ impl FileMode {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SingleFile {
     pub length: u64,
     pub md5sum: Option<ByteBuf>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultipleFiles {
     pub files: Vec<File>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct File {
     pub length: u64,
     pub md5sum: Option<ByteBuf>,

@@ -67,23 +67,6 @@ impl PeerMessage {
             Self::Cancel(_) => PEER_MESSAGE_CANCEL,
         }
     }
-
-    // pub fn read_from(mtype: u8, buf: &[u8]) -> Result<Self, ()> {
-    //     // let mtype = u8::unpack(buf)?;
-    //     // let buf = &buf[u8::const_byte_size()..];
-    //     match mtype {
-    //         PEER_MESSAGE_CHOKE          => Ok(PeerMessage::Choke),
-    //         PEER_MESSAGE_UNCHOKE        => Ok(PeerMessage::Unchoke),
-    //         PEER_MESSAGE_INTERESTED     => Ok(PeerMessage::Interested),
-    //         PEER_MESSAGE_NOTINTERESTED  => Ok(PeerMessage::NotInterested),
-    //         PEER_MESSAGE_HAVE           => Ok(PeerMessage::Have(Have::unpack(buf)?)),
-    //         PEER_MESSAGE_BITFIELD       => Ok(PeerMessage::Bitfield(Bitfield::unpack(buf)?)),
-    //         PEER_MESSAGE_REQUEST        => Ok(PeerMessage::Request(Request::unpack(buf)?)),
-    //         PEER_MESSAGE_PIECE          => Ok(PeerMessage::Piece(Piece::unpack(buf)?)),
-    //         PEER_MESSAGE_CANCEL         => Ok(PeerMessage::Cancel(Cancel::unpack(buf)?)),
-    //         _ => Err(()),
-    //     }
-    // }
 }
 
 impl ByteSize for PeerMessage {
@@ -106,7 +89,7 @@ impl ByteSize for PeerMessage {
 impl BytePack for PeerMessage {
     fn pack(&self, buf: &mut [u8]) -> Result<(), ()> {
         self.message_type().pack(buf)?;
-        let buf = &mut buf[u8::const_byte_size()..0];
+        let buf = &mut buf[u8::const_byte_size()..];
         match self {
             Self::Have(m) => m.pack(buf),
             Self::Bitfield(m) => m.pack(buf),
@@ -118,31 +101,31 @@ impl BytePack for PeerMessage {
     }
 }
 
-#[derive(Debug, ConstByteSize, ByteSize, BytePack, ByteUnpack)]
+#[derive(Debug, Clone, ConstByteSize, ByteSize, BytePack, ByteUnpack)]
 pub struct Have {
     pub index: u32,
 }
 
-#[derive(Debug, ByteSize, BytePack, ByteUnpack)]
+#[derive(Debug, Clone, ByteSize, BytePack, ByteUnpack)]
 pub struct Bitfield {
     pub bitfield: SplatDrain<u8>,
 }
 
-#[derive(Debug, ConstByteSize, ByteSize, BytePack, ByteUnpack)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq, ConstByteSize, ByteSize, BytePack, ByteUnpack)]
 pub struct Request {
     pub index: u32,
     pub begin: u32,
     pub length: u32,
 }
 
-#[derive(Debug, ByteSize, BytePack, ByteUnpack)]
+#[derive(Debug, Clone, ByteSize, BytePack, ByteUnpack)]
 pub struct Piece {
     pub index: u32,
     pub begin: u32,
-    pub piece: SplatDrain<u8>,
+    pub chunk: SplatDrain<u8>,
 }
 
-#[derive(Debug, ConstByteSize, ByteSize, BytePack, ByteUnpack)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq, ConstByteSize, ByteSize, BytePack, ByteUnpack)]
 pub struct Cancel {
     pub index: u32,
     pub begin: u32,

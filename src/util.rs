@@ -1,3 +1,4 @@
+use bitvec::vec::BitVec;
 use serde_bytes::ByteBuf;
 
 pub fn create_buffer(len: usize) -> Box<[u8]> {
@@ -29,6 +30,130 @@ pub fn encode_as_hex_string(bytes: &[u8]) -> String {
             acc.push(s[1]);
             acc
         })
+}
+
+pub struct FixedCache<T, const N: usize> {
+    cursor: usize,
+    occupied: [bool; N],
+    ids: [usize; N],
+    slots: [T; N],
+}
+
+impl<T: Default, const N: usize> FixedCache<T, N> {
+    pub fn new_default_inited() -> Self {
+        Self {
+            cursor: 0,
+            occupied: [false; N],
+            ids: [0; N],
+            slots: std::array::from_fn(|_| T::default()),
+        }
+    }
+}
+
+impl<T: Clone, const N: usize> FixedCache<T, N> {
+    pub fn new_clone_inited(init: T) -> Self {
+        Self {
+            cursor: 0,
+            occupied: [false; N],
+            ids: [0; N],
+            slots: std::array::from_fn(|_| init.clone()),
+        }
+    }
+}
+
+impl<T, const N: usize> FixedCache<T, N> {
+    pub unsafe fn new_uninit() -> Self {
+        Self {
+            cursor: 0,
+            occupied: [false; N],
+            ids: [0; N],
+            slots: std::mem::MaybeUninit::uninit().assume_init(),
+        }
+    }
+
+    pub fn get(&self, id: usize) -> Option<&T> {
+        let slot_i = self.ids.iter().position(|this_id| *this_id == id)?;
+        if !self.occupied[slot_i] {
+            return None;
+        }
+        Some(&self.slots[slot_i])
+    }
+
+    pub fn add(&mut self, id: usize, item: T) -> &T {
+        let slot_i = match self.ids.iter().position(|this_id| *this_id == id) {
+            // id found, reuse the same slot
+            Some(slot_i) => slot_i,
+            // id not found, replace oldest cache item
+            None => {
+                let slot_i = self.cursor;
+                self.cursor = (self.cursor + 1) % N;
+                slot_i
+            }
+        };
+        
+        self.occupied[slot_i] = true;
+        self.ids[slot_i] = id;
+        self.slots[slot_i] = item;
+
+        &self.slots[slot_i]
+    }
+}
+
+pub struct _FixedQueue<T, const N: usize> {
+    head: usize,
+    len: usize,
+    items: [T; N],
+}
+
+impl<T, const N: usize> _FixedQueue<T, N> {
+    pub fn new_empty() -> Self {
+        Self {
+            head: 0,
+            len: 0,
+            items: unsafe { std::mem::MaybeUninit::uninit().assume_init() }, // TODO
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.len == N
+    }
+
+    pub fn push(&mut self, item: T) -> bool {
+        if self.len == N {
+            return false;
+        }
+        let tail = (self.head + self.len) % N;
+        self.items[tail] = item;
+        return true;
+    }
+
+    pub fn pop(&mut self) -> Option<T> {
+        if self.len == 0 {
+            return None;
+        }
+        let item = unsafe { self.items.as_ptr().add(self.head).read() };
+        self.len -= 1;
+        self.head = (self.head + 1) % N;
+        Some(item)
+    }
+}
+
+pub fn bitcount_to_bytecount(bit_count: usize) -> usize {
+    (bit_count / 8) + ((bit_count % 8) != 0) as usize
+}
+
+pub trait BitVecU8Ext {
+    fn into_u8_vec(&self) -> Vec<u8>;
+}
+
+impl BitVecU8Ext for BitVec<u8> {
+    fn into_u8_vec(&self) -> Vec<u8> {
+        self.domain().collect()
+    }
 }
 
 pub trait IntoHexString {

@@ -1,4 +1,3 @@
-
 use std::sync::atomic::AtomicU32;
 
 use anyhow::bail;
@@ -9,9 +8,9 @@ use peer_message::PeerMessage;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
-use crate::*;
-use super::*;
 use super::peer_net;
+use super::*;
+use crate::*;
 
 // TODO: impl proper piece requester
 pub async fn spin_piece_requester(
@@ -33,23 +32,42 @@ pub async fn spin_piece_requester(
         };
         println!("Sweep started for torrent requesting...");
 
-        let piece_indices: Vec<u32> = {
+        let mut piece_indices: Vec<(u32, usize)> = {
             let torrent_file_read = torrent_file.read().await;
-            torrent_file_read.write_half.get_download_piece_indices()
+            torrent_file_read
+                .bitfield
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| **b)
+                .map(|(piece_index, _)| (0, piece_index))
+                .collect()
+            // torrent_file_read.write_half.get_download_piece_indices()
         };
 
         if piece_indices.is_empty() {
             return; // downloaded all
         }
 
-        for piece_index in piece_indices {
+        {
+            let peer_list_read = peer_list.read().await;
+            for (availability, piece_index) in &mut piece_indices {
+                let piece_index = *piece_index;
+                for (i, peer) in peer_list_read.peers.iter().enumerate() {
+                    let peer_read = peer.read().await;
+                    *availability += *peer_read.bitfield.get(piece_index).unwrap() as u32;
+                }
+            }
+        }
+        piece_indices.sort_by_key(|(availability, _)| *availability);
+
+        for (_, piece_index) in piece_indices {
             let peer = {
                 let peer_list_read = peer_list.read().await;
                 let mut found = false;
                 let mut peer_index = 0;
                 for (i, peer) in peer_list_read.peers.iter().enumerate() {
                     let peer_read = peer.read().await;
-                    if peer_read.bitfield[piece_index as usize] {
+                    if *peer_read.bitfield.get(piece_index).unwrap() {
                         found = true;
                         peer_index = i;
                         break;
@@ -80,7 +98,7 @@ pub async fn spin_piece_requester(
 
             for chunk in piece_chunks {
                 let request = peer_message::Request {
-                    index: piece_index,
+                    index: piece_index as u32,
                     begin: chunk.begin as u32,
                     length: chunk.length as u32,
                 };

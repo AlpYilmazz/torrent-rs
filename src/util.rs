@@ -1,3 +1,5 @@
+use std::mem::ManuallyDrop;
+
 use bitvec::vec::BitVec;
 use serde_bytes::ByteBuf;
 
@@ -36,50 +38,32 @@ pub struct FixedCache<T, const N: usize> {
     cursor: usize,
     occupied: [bool; N],
     ids: [usize; N],
-    slots: [T; N],
+    slots: [ManuallyDrop<T>; N],
 }
 
-impl<T: Default, const N: usize> FixedCache<T, N> {
-    pub fn new_default_inited() -> Self {
-        Self {
-            cursor: 0,
-            occupied: [false; N],
-            ids: [0; N],
-            slots: std::array::from_fn(|_| T::default()),
-        }
-    }
-}
-
-impl<T: Clone, const N: usize> FixedCache<T, N> {
-    pub fn new_clone_inited(init: T) -> Self {
-        Self {
-            cursor: 0,
-            occupied: [false; N],
-            ids: [0; N],
-            slots: std::array::from_fn(|_| init.clone()),
-        }
+impl<T, const N: usize> Drop for FixedCache<T, N> {
+    fn drop(&mut self) {
+        self.clear();
     }
 }
 
 impl<T, const N: usize> FixedCache<T, N> {
-    pub unsafe fn new_uninit() -> Self {
+    pub fn new() -> Self {
         Self {
             cursor: 0,
             occupied: [false; N],
             ids: [0; N],
-            slots: std::mem::MaybeUninit::uninit().assume_init(),
+            slots: unsafe { std::mem::MaybeUninit::uninit().assume_init() },
         }
     }
 
-    pub fn get(&self, id: usize) -> Option<&T> {
-        let slot_i = self.ids.iter().position(|this_id| *this_id == id)?;
-        if !self.occupied[slot_i] {
-            return None;
-        }
-        Some(&self.slots[slot_i])
+    #[inline(always)]
+    unsafe fn drop_slot_item(&mut self, slot_i: usize) {
+        println!("Dropping item at slot {slot_i}");
+        ManuallyDrop::drop(&mut self.slots[slot_i]);
     }
 
-    pub fn add(&mut self, id: usize, item: T) -> &T {
+    pub fn save(&mut self, id: usize, item: T) -> &T {
         let slot_i = match self.ids.iter().position(|this_id| *this_id == id) {
             // id found, reuse the same slot
             Some(slot_i) => slot_i,
@@ -90,14 +74,78 @@ impl<T, const N: usize> FixedCache<T, N> {
                 slot_i
             }
         };
-        
+
+        if self.occupied[slot_i] {
+            unsafe {
+                self.drop_slot_item(slot_i);
+            }
+        }
+
         self.occupied[slot_i] = true;
         self.ids[slot_i] = id;
-        self.slots[slot_i] = item;
+        self.slots[slot_i] = ManuallyDrop::new(item);
 
         &self.slots[slot_i]
     }
+
+    pub fn read(&self, id: usize) -> Option<&T> {
+        let slot_i = self.ids.iter().position(|this_id| *this_id == id)?;
+        if !self.occupied[slot_i] {
+            return None;
+        }
+        Some(&self.slots[slot_i])
+    }
+
+    pub fn remove(&mut self, id: usize) -> bool {
+        let Some(slot_i) = self.ids.iter().position(|this_id| *this_id == id) else {
+            return false;
+        };
+        if !self.occupied[slot_i] {
+            return false;
+        }
+        unsafe {
+            self.drop_slot_item(slot_i);
+        }
+        true
+    }
+
+    pub fn clear(&mut self) {
+        for slot_i in 0..N {
+            if self.occupied[slot_i] {
+                unsafe {
+                    self.drop_slot_item(slot_i);
+                }
+            }
+        }
+    }
 }
+
+#[macro_export]
+macro_rules! cache_read {
+    ($cache: expr, $id: expr, $or_else_save: expr) => {
+        match ($cache).read(($id)) {
+            Some(item) => item,
+            None => {
+                let item = ($or_else_save);
+                ($cache).save(($id), item)
+            },
+        }
+    };
+}
+
+// let piece_buffer = match self.piece_cache.read(index) {
+//     Some(buffer) => buffer,
+//     None => {
+//         self.file
+//             .seek(SeekFrom::Start(self.get_cursor_pos(index, 0)))
+//             .await?;
+
+//         let mut piece_buffer = create_buffer(this_piece_length);
+//         self.file.read_exact(&mut piece_buffer).await?;
+
+//         self.piece_cache.save(index, piece_buffer)
+//     },
+// };
 
 pub struct _FixedQueue<T, const N: usize> {
     head: usize,

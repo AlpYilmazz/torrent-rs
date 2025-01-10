@@ -8,7 +8,10 @@ use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
 };
 
-use crate::util::{self, bitcount_to_bytecount, create_buffer, BitVecU8Ext, FixedCache};
+use crate::{
+    cache_read,
+    util::{self, bitcount_to_bytecount, create_buffer, BitVecU8Ext, FixedCache},
+};
 
 const CHUNK_SIZE_POW2: usize = 14;
 const CHUNK_SIZE: usize = 1 << CHUNK_SIZE_POW2;
@@ -251,9 +254,7 @@ impl PieceBuffer {
     }
 
     fn check_piece(&self, piece_hash: &str) -> PieceResult {
-        let all_filled = self.chunks.iter().all(|cs| {
-            cs.is_filled
-        });
+        let all_filled = self.chunks.iter().all(|cs| cs.is_filled);
         if !all_filled {
             return PieceResult::NotComplete;
         }
@@ -311,7 +312,7 @@ impl TorrentFileRead {
             piece_count,
             piece_length,
             file,
-            piece_cache: FixedCache::new_default_inited(),
+            piece_cache: FixedCache::new(),
         })
     }
 
@@ -342,19 +343,29 @@ impl TorrentFileRead {
             bail!("Piece is smaller than the requested size, cannot serve it.");
         }
 
-        let piece_buffer = match self.piece_cache.get(index) {
-            Some(buffer) => buffer,
-            None => {
-                self.file
-                    .seek(SeekFrom::Start(self.get_cursor_pos(index, 0)))
-                    .await?;
+        // let piece_buffer = match self.piece_cache.read(index) {
+        //     Some(buffer) => buffer,
+        //     None => {
+        //         self.file
+        //             .seek(SeekFrom::Start(self.get_cursor_pos(index, 0)))
+        //             .await?;
 
-                let mut piece_buffer = create_buffer(this_piece_length);
-                self.file.read_exact(&mut piece_buffer).await?;
+        //         let mut piece_buffer = create_buffer(this_piece_length);
+        //         self.file.read_exact(&mut piece_buffer).await?;
 
-                self.piece_cache.add(index, piece_buffer)
-            },
-        };
+        //         self.piece_cache.save(index, piece_buffer)
+        //     },
+        // };
+
+        let piece_buffer = cache_read!(self.piece_cache, index, {
+            self.file
+                .seek(SeekFrom::Start(self.get_cursor_pos(index, 0)))
+                .await?;
+
+            let mut piece_buffer = create_buffer(this_piece_length);
+            self.file.read_exact(&mut piece_buffer).await?;
+            piece_buffer
+        });
 
         let begin = begin;
         let end = begin + length;

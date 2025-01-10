@@ -30,7 +30,7 @@ pub async fn handle_piece_request(
     piece_request_queue.send(PieceRequestItem {
         peer_index,
         request,
-    });
+    }).await;
 }
 
 pub async fn handle_piece_download(

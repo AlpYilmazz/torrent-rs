@@ -6,32 +6,26 @@ const TEST_TORRENT_FILE: &'static str = "res/godel.torrent";
 #[tokio::main]
 async fn main() {
 
-    use bitvec::prelude::*;
-    let mut bv = BitVec::<_, LocalBits>::from_vec(vec![1u8, 2, 19]);
+    use torrent_rs::cache_read;
+    use torrent_rs::util::*;
 
-    for i in 0..3*8 {
-        if i != 0 && i % 8 == 0 {
-            print!(" ");
-        }
-        let bit = *bv.get(i).unwrap() as u8;
-        print!("{}", bit);
-    }
-    print!("\n");
+    let mut cache: FixedCache<Box<[u8]>, 4> = FixedCache::new();
 
-    bv.clear();
-    bv.extend_from_raw_slice(&[7, 8, 100]);
+    cache.save(10, create_buffer(100));
+    cache.save(20, create_buffer(100));
+    cache.save(30, create_buffer(100));
+    cache.save(40, create_buffer(100));
+    cache.save(50, create_buffer(100)); // drop 0
+    cache.save(60, create_buffer(100)); // drop 1
+    cache.save(60, create_buffer(100)); // drop 1
 
-    for i in 0..3*8 {
-        if i != 0 && i % 8 == 0 {
-            print!(" ");
-        }
-        let bit = *bv.get(i).unwrap() as u8;
-        print!("{}", bit);
-    }
-    print!("\n");
+    cache.save(10, create_buffer(100)); // drop 2
+    cache.save(10, create_buffer(200)); // drop 2
 
-    let dom = bv.domain().collect::<Vec<_>>();
-    dbg!(dom);
+    let item = cache_read!(cache, 10, { println!("cache miss"); create_buffer(100) });
+    println!("item len: {}", item.len());
+
+    drop(cache); // drop 0, 1, 2, 3
 
     return;
 

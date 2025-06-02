@@ -26,22 +26,25 @@ pub async fn spin_piece_requester(
     let mut go_ahead_channel: Receiver<()> = unimpl_create();
     let mut start_sweep_channel: Receiver<()> = unimpl_create();
 
+    // (availability, piece_index)
+    let mut piece_indices: Vec<(u32, usize)> = Vec::new();
+
     loop {
+        piece_indices.clear();
         let Some(()) = start_sweep_channel.recv().await else {
             return; // channel closed
         };
         println!("Sweep started for torrent requesting...");
 
-        let mut piece_indices: Vec<(u32, usize)> = {
+        {
             let torrent_file_read = torrent_file.read().await;
-            torrent_file_read
+            let pieces = torrent_file_read
                 .bitfield
                 .iter()
                 .enumerate()
                 .filter(|(_, b)| **b)
-                .map(|(piece_index, _)| (0, piece_index))
-                .collect()
-            // torrent_file_read.write_half.get_download_piece_indices()
+                .map(|(piece_index, _)| (0, piece_index));
+            piece_indices.extend(pieces);
         };
 
         if piece_indices.is_empty() {
@@ -52,7 +55,7 @@ pub async fn spin_piece_requester(
             let peer_list_read = peer_list.read().await;
             for (availability, piece_index) in &mut piece_indices {
                 let piece_index = *piece_index;
-                for (i, peer) in peer_list_read.peers.iter().enumerate() {
+                for peer in peer_list_read.peers.iter() {
                     let peer_read = peer.read().await;
                     *availability += *peer_read.bitfield.get(piece_index).unwrap() as u32;
                 }
@@ -60,7 +63,7 @@ pub async fn spin_piece_requester(
         }
         piece_indices.sort_by_key(|(availability, _)| *availability);
 
-        for (_, piece_index) in piece_indices {
+        for (_, piece_index) in piece_indices.iter().cloned() {
             let peer = {
                 let peer_list_read = peer_list.read().await;
                 let mut found = false;
@@ -88,7 +91,7 @@ pub async fn spin_piece_requester(
                 let torrent_file_read = torrent_file.read().await;
                 torrent_file_read
                     .write_half
-                    .get_piece_chunks(piece_index as usize)
+                    .get_piece_chunks(piece_index)
             };
 
             let send_channel = {
